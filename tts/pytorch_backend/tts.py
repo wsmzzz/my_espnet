@@ -143,8 +143,7 @@ class CustomUpdater(training.StandardUpdater):
             x = batch
             for key in x.keys():
                 x[key] = x[key].to(self.device)
-        
-       
+
 
         # compute loss and gradient
         if isinstance(x, tuple):
@@ -248,7 +247,7 @@ class CustomConverter(object):
         # perform padding and conversion to tensor
         xs = pad_list([torch.from_numpy(x).long() for x in xs], 0).to(device)
         ys = pad_list([torch.from_numpy(y).float() for y in ys], self.feat_pad_value).to(device)
-        max_ys=max(olens)
+        # max_ys=max(olens)
         
         if len(xs[0].shape)==2:
             xs=torch.transpose(xs,1,2)
@@ -266,8 +265,9 @@ class CustomConverter(object):
             "ys": ys,
             "labels": labels,
             "olens": olens,
-            "max_ys":max_ys
+            # "max_ys":max_ys
         }
+
 
         # load speaker embedding
         if spembs is not None:
@@ -365,6 +365,7 @@ def train(args):
     param_num=sum(param.numel() for param in model.parameters())
     print('*******************************************')
     print('the model has %s params'%param_num )
+    print('gpu number is %s'%torch.cuda.device_count())
     print('*******************************************')
 
     # freeze modules, if specified
@@ -405,6 +406,7 @@ def train(args):
     use_sortagrad = args.sortagrad == -1 or args.sortagrad > 0
     if use_sortagrad:
         args.batch_sort_key = "input"
+
     # make minibatch list (variable length)
     train_batchset = make_batchset(
         train_json,

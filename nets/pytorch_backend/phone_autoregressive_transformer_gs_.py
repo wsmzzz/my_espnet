@@ -3,6 +3,7 @@
 
 # Copyright 2019 Tomoki Hayashi
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
+# Add gaussian sampling
 
 """TTS-Transformer related modules."""
 
@@ -29,7 +30,7 @@ from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
 from espnet.nets.pytorch_backend.transformer.embedding import ScaledPositionalEncoding
 from espnet.nets.pytorch_backend.transformer.encoder import Encoder_v2
 from espnet.nets.pytorch_backend.transformer.initializer import initialize
-from espnet.nets.pytorch_backend.fastspeech.length_regulator import LengthRegulator_gs
+from espnet.nets.pytorch_backend.fastspeech.length_regulator import LengthRegulator_gs 
 from espnet.nets.pytorch_backend.transformer.plot import _plot_and_save_attention
 from espnet.nets.pytorch_backend.transformer.plot import PlotAttentionReport
 from espnet.nets.tts_interface import TTSInterface
@@ -40,82 +41,80 @@ from espnet.nets.pytorch_backend.fastspeech.duration_calculator import (
 )
 from espnet.nets.pytorch_backend.fastspeech.duration_predictor import  Duration_variance_Predictor
 from espnet.nets.pytorch_backend.fastspeech.duration_predictor import (
-    DurationPredictorLoss)  # noqa: H301
-
+DurationPredictorLoss)  # noqa: H301
 
 def get_parameter_number(net):
     total_num = sum(p.numel() for p in net.parameters())
     trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
-    return [total_num, trainable_num]
+    return  [total_num,trainable_num]
 
 
-def get_phone_mask(dur, max_frame=None):
-    Batch, Tx = dur.shape
-    cusum_dur = np.cumsum(dur, axis=1)  # (N,T)
+def get_phone_mask(dur,max_frame=None):
+
+
+    Batch,Tx=dur.shape
+    cusum_dur=np.cumsum(dur,axis=1)   #(N,T)
     if max_frame is None:
-        max_frame = np.max(cusum_dur)
-    masks = []
+        max_frame=np.max(cusum_dur)
+    masks=[]
     for i in range(Batch):
-        mask = []
+        mask=[]
 
         for j in range(Tx):
-            for m in range(dur[i, j]):
-                mask.append(np.pad(np.arange(1, cusum_dur[i, j] + 1), (0, max_frame - cusum_dur[i, j]), mode='constant',
-                                   constant_values=0))
-        mask = np.stack(mask, axis=0)
+            for m in range(dur[i,j]):
+                mask.append(np.pad(np.arange(1,cusum_dur[i,j]+1),(0,max_frame-cusum_dur[i,j]), mode='constant', constant_values=0))
+        mask=np.stack(mask,axis=0)
         masks.append(mask)
-    masks = [np.pad(mask, [(0, max_frame - cusum_dur[i, -1]), (0, 0)]) for i, mask in enumerate(masks)]
-    masks = np.stack(masks, axis=0)
+    masks=[np.pad(mask,[(0,max_frame-cusum_dur[i,-1]),(0,0)]) for i, mask in enumerate(masks)]
+    masks=np.stack(masks,axis=0)
 
-    return masks
+    return  masks
 
+def torch_get_phone_mask(dur,max_frame=None):
 
-def torch_get_phone_mask(dur, max_frame=None):
-    Batch = dur.shape[0]
-    Tx = dur.shape[1]
-    cusum_dur = torch.cumsum(dur, dim=1)
+    Batch=dur.shape[0]
+    Tx=dur.shape[1]
+    cusum_dur=torch.cumsum(dur,dim=1)
     masks = []
-    if max_frame is None:
-        max_frame = torch.max(cusum_dur)
+    if max_frame is  None:
+        max_frame=torch.max(cusum_dur)
     for i in range(Batch):
-        mask = []
+        mask=[]
 
         for j in range(Tx):
-            for m in range(dur[i, j]):
-                mask.append(
-                    F.pad(torch.arange(1, cusum_dur[i, j] + 1, device=dur.device), (0, max_frame - cusum_dur[i, j]),
-                          mode='constant', value=0))
-        mask = torch.stack(mask, dim=0)
+            for m in range(dur[i,j]):
+                mask.append(F.pad(torch.arange(1,cusum_dur[i,j]+1,device=dur.device),(0,max_frame-cusum_dur[i,j]), mode='constant', value=0))
+        mask=torch.stack(mask,dim=0)
         masks.append(mask)
-    masks = [F.pad(mask, [0, 0, 0, max_frame - cusum_dur[i, -1]]) for i, mask in enumerate(masks)]
-    masks = torch.stack(masks, dim=0)
+    masks=[F.pad(mask,[0,0,0,max_frame-cusum_dur[i,-1]]) for i, mask in enumerate(masks)]
+    masks=torch.stack(masks,dim=0)
 
-    return masks
-
-
-def get_pad_mask(dur, pad_num, is_training=True):
+    return  masks
+    
+def get_pad_mask(dur,pad_num,is_training=True):
     Batch, Tx = dur.shape
-    dur_pad = np.concatenate([np.ones([Batch, 1]) * pad_num, dur[:, :-1]], axis=1).astype(np.int32)
-    cusum_dur_real = np.cumsum(dur, axis=1)
+    dur_pad=np.concatenate([np.ones([Batch,1])*pad_num,dur[:,:-1]],axis=1).astype(np.int32)
+    cusum_dur_real=np.cumsum(dur, axis=1)
     cusum_dur = np.cumsum(dur_pad, axis=1)  # (N,T)
     if is_training:
         max_frame = np.max(cusum_dur_real)
     else:
-        max_frame = max(np.max(cusum_dur_real), np.max(cusum_dur))
+        max_frame=max(np.max(cusum_dur_real),np.max(cusum_dur))
     masks = []
     for i in range(Batch):
         mask = []
 
         for j in range(Tx):
             for m in range(dur[i, j]):
-                if j == 0:
-                    mask.append(
-                        np.pad(np.arange(1, cusum_dur[i, j] + 1), (0, max_frame - cusum_dur[i, j]), mode='constant',
-                               constant_values=0))
+                if j==0:
+                    mask.append(np.pad(np.arange(1, cusum_dur[i, j] + 1), (0, max_frame - cusum_dur[i, j]), mode='constant',
+                                   constant_values=0))
                 else:
                     mask.append(np.concatenate([np.zeros([pad_num]),
-                                                np.arange(1, cusum_dur[i, j] + 1 - pad_num),
-                                                np.zeros([max_frame - cusum_dur[i, j]])], axis=0))
+                                                np.arange(1, cusum_dur[i, j] + 1-pad_num),
+                                                np.zeros([max_frame - cusum_dur[i, j]])],axis=0))
+
+
 
         mask = np.stack(mask, axis=0)
 
@@ -125,11 +124,10 @@ def get_pad_mask(dur, pad_num, is_training=True):
 
     return masks
 
-
-def torch_get_pad_mask(dur, pad_num, is_training=True):
+def torch_get_pad_mask(dur,pad_num,is_training=True):
     Batch = dur.shape[0]
     Tx = dur.shape[1]
-    dur_pad = torch.cat([torch.ones([Batch, 1], device=dur.device).long() * pad_num, dur[:, :-1]], dim=1)
+    dur_pad = torch.cat([torch.ones([Batch,1],device=dur.device).long()*pad_num,dur[:,:-1]],dim=1)
     cusum_dur_real = torch.cumsum(dur, dim=1)
     cusum_dur = torch.cumsum(dur_pad, dim=1)  # (N,T)
     if is_training:
@@ -144,38 +142,35 @@ def torch_get_pad_mask(dur, pad_num, is_training=True):
             for m in range(dur[i, j]):
                 if j == 0:
                     mask.append(
-                        F.pad(torch.arange(1, cusum_dur[i, j] + 1, device=dur.device), (0, max_frame - cusum_dur[i, j]),
-                              mode='constant',
-                              value=0))
+                        F.pad(torch.arange(1, cusum_dur[i, j] + 1,device=dur.device), (0, max_frame - cusum_dur[i, j]), mode='constant',
+                               value=0))
                 else:
-                    mask.append(torch.cat([torch.zeros([pad_num], device=dur.device).long(),
-                                           torch.arange(1, cusum_dur[i, j] + 1 - pad_num, device=dur.device),
-                                           torch.zeros([max_frame - cusum_dur[i, j]], device=dur.device).long()],
-                                          dim=0))
+                    mask.append(torch.cat([torch.zeros([pad_num],device=dur.device).long(),
+                                                torch.arange(1, cusum_dur[i, j] + 1 - pad_num,device=dur.device),
+                                                torch.zeros([max_frame - cusum_dur[i, j]],device=dur.device).long()], dim=0))
 
         mask = torch.stack(mask, dim=0)
 
         masks.append(mask)
-    masks = [F.pad(mask, [0, 0, 0, max_frame - cusum_dur_real[i, -1]]) for i, mask in enumerate(masks)]
+    masks = [F.pad(mask, [0, 0,0, max_frame - cusum_dur_real[i, -1]]) for i, mask in enumerate(masks)]
     masks = torch.stack(masks, dim=0)
 
     return masks
-
-
-def part_pad_mask(pre_dur, dur, max_frame):
-    mask = []
+    
+def part_pad_mask(pre_dur,dur,max_frame):
+    mask=[]
     for i in range(dur):
-        mask.append(np.pad(np.arange(1, 1 + pre_dur), (0, max_frame - pre_dur)))
-    mask = np.stack(mask, axis=0)
-    mask = np.pad(mask, [[0, max_frame - dur], [0, 0]])
-    mask = np.expand_dims(mask, 0)
-    return torch.from_numpy(mask).long()
+        mask.append(np.pad(np.arange(1,1+pre_dur),(0,max_frame-pre_dur)))
+    mask=np.stack(mask,axis=0)
+    mask=np.pad(mask,[[0,max_frame-dur],[0,0]])
+    mask=np.expand_dims(mask,0)
+    return  torch.from_numpy(mask).long()
 
 
 class FeedForwardTransformerLoss(torch.nn.Module):
     """Loss function module for feed-forward Transformer."""
 
-    def __init__(self, use_masking=True, use_weighted_masking=False, stage=1):
+    def __init__(self, use_masking=True, use_weighted_masking=False,stage=1):
         """Initialize feed-forward Transformer loss module.
 
         Args:
@@ -189,13 +184,13 @@ class FeedForwardTransformerLoss(torch.nn.Module):
         assert (use_masking != use_weighted_masking) or not use_masking
         self.use_masking = use_masking
         self.use_weighted_masking = use_weighted_masking
-        self.stage = stage
+        self.stage=stage
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.duration_criterion = DurationPredictorLoss(reduction=reduction)
 
-    def forward(self, after_outs, before_outs, d_outs, ys, ds, i_mask, o_mask, stage=1):
+    def forward(self, after_outs, before_outs, d_outs, ys, ds, ilens, olens,stage=1):
         """Calculate forward propagation.
 
         Args:
@@ -214,33 +209,38 @@ class FeedForwardTransformerLoss(torch.nn.Module):
         """
         # apply mask to remove padded part
         if self.use_masking:
+            duration_masks = make_non_pad_mask(ilens).to(ys.device)
+            duration_masks=torch.cat([duration_masks,duration_masks.new_zeros(duration_masks.shape[0],1)],dim=-1)
+            d_outs = d_outs.masked_select(duration_masks)
+            ds = ds.masked_select(duration_masks)
+            if self.stage==1:
 
-            d_outs = d_outs.masked_select(i_mask)
-            ds = ds.masked_select(i_mask)
-            if self.stage == 1:
-                o_mask = o_mask.unsqueeze(-1).repeat([1, 1, 80])
-                before_outs = before_outs.masked_select(o_mask)
+                out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
+                buffer_size=ys.shape[1]-out_masks.shape[1]
+                out_masks=torch.cat([out_masks,torch.zeros_like(out_masks[:,:buffer_size,:])],dim=1)
+                before_outs = before_outs.masked_select(out_masks)
                 after_outs = (
-                    after_outs.masked_select(o_mask) if after_outs is not None else None
+                    after_outs.masked_select(out_masks) if after_outs is not None else None
                 )
-                ys = ys.masked_select(o_mask)
-
+                ys = ys.masked_select(out_masks)
+                
                 # calculate loss
                 l1_loss = self.l1_criterion(before_outs, ys)
                 if after_outs is not None:
                     l1_loss += self.l1_criterion(after_outs, ys)
             else:
-                d_outs_int = xs = torch.clamp(
+                d_outs_int=xs = torch.clamp(
                     torch.round(d_outs_.exp() - 1), min=0
-                ).long()  # avoid negative value
-
-                oplens = torch.sum(d_outs_int, dim=-1)
-
-                index_a, index_b = multi_process_path(ys, before_outs, olens, oplens)
-                l1_loss = dtw_loss(ys, before_outs, index_a, index_b, self.l1_criterion)
+                    ).long()  # avoid negative value
+                
+                oplens=torch.sum(d_outs_int,dim=-1)  
+                
+                index_a, index_b = multi_process_path(ys,before_outs,olens,oplens)
+                l1_loss=dtw_loss(ys,before_outs,index_a,index_b,self.l1_criterion)   
                 if after_outs is not None:
-                    l1_loss += dtw_loss(ys, after_outs, index_a, index_b, self.l1_criterion)
-
+                    l1_loss += dtw_loss(ys,after_outs,index_a,index_b,self.l1_criterion)
+                
+                
         duration_loss = self.duration_criterion(d_outs, ds)
         # make weighted mask and apply it
         if self.use_weighted_masking:
@@ -249,7 +249,7 @@ class FeedForwardTransformerLoss(torch.nn.Module):
             out_weights /= ys.size(0) * ys.size(2)
             duration_masks = make_non_pad_mask(ilens).to(ys.device)
             duration_weights = (
-                    duration_masks.float() / duration_masks.sum(dim=1, keepdim=True).float()
+                duration_masks.float() / duration_masks.sum(dim=1, keepdim=True).float()
             )
             duration_weights /= ds.size(0)
 
@@ -266,7 +266,7 @@ class TransformerLoss(torch.nn.Module):
     """Loss function module for Tacotron2."""
 
     def __init__(
-            self, use_masking=True, use_weighted_masking=False, bce_pos_weight=20.0
+        self, use_masking=True, use_weighted_masking=False, bce_pos_weight=20.0
     ):
         """Initialize Tactoron2 loss module.
 
@@ -311,11 +311,10 @@ class TransformerLoss(torch.nn.Module):
         # make mask and apply it
         if self.use_masking:
             masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            buffer_size = ys.shape[1] - masks.shape[1]
-            masks = torch.cat([masks, torch.zeros_like(masks[:, :buffer_size, :])], dim=1)
-
+            buffer_size=ys.shape[1]-masks.shape[1]
+            masks=torch.cat([masks,torch.zeros_like(masks[:,:buffer_size,:])],dim=1)
+            
             ys = ys.masked_select(masks)
-
             after_outs = after_outs.masked_select(masks)
             before_outs = before_outs.masked_select(masks)
 
@@ -338,14 +337,14 @@ class TransformerLoss(torch.nn.Module):
         return l1_loss, mse_loss
 
     def _load_state_dict_pre_hook(
-            self,
-            state_dict,
-            prefix,
-            local_metadata,
-            strict,
-            missing_keys,
-            unexpected_keys,
-            error_msgs,
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
     ):
         """Apply pre hook fucntion before loading state dict.
 
@@ -358,7 +357,7 @@ class TransformerLoss(torch.nn.Module):
         """
         key = prefix + "bce_criterion.pos_weight"
         # if key not in state_dict:
-        # state_dict[key] = self.bce_criterion.pos_weight
+            # state_dict[key] = self.bce_criterion.pos_weight
 
 
 class TTSPlot(PlotAttentionReport):
@@ -391,29 +390,30 @@ class TTSPlot(PlotAttentionReport):
                 else:
                     fig = _plot_and_save_attention(att_w, filename)
                 savefn(fig, filename)
-
-
+                
 class Rhythm_Embedding(torch.nn.Module):
-
-    def __init__(self, indim, outdim, rhythm_num, embed_rhythm_dim, concat_dim, padding=0, use_rhythm_embed=True):
+    
+    def __init__(self,indim,outdim,rhythm_num,embed_rhythm_dim,concat_dim,padding=0,use_rhythm_embed=True):
         super().__init__()
-        self.use_rhythm_embed = use_rhythm_embed
+        self.use_rhythm_embed=use_rhythm_embed
         self.embed = torch.nn.Embedding(indim, outdim, padding_idx=padding)
         if self.use_rhythm_embed:
-            self.rhythm_embed = torch.nn.Embedding(rhythm_num, embed_rhythm_dim, padding_idx=padding)
-            self.concat = torch.nn.Linear(outdim + embed_rhythm_dim, concat_dim)
-
-    def forward(self, xs):
-
+            self.rhythm_embed=torch.nn.Embedding(rhythm_num,embed_rhythm_dim,padding_idx=padding)
+            self.concat=torch.nn.Linear(outdim+embed_rhythm_dim,concat_dim)
+    
+    def forward(self,xs):
+    
         if self.use_rhythm_embed:
-            word_output = self.embed(xs[:, 0, :].view(-1, xs.shape[-1]))
-            rythm_output = self.rhythm_embed(xs[:, 1, :].view(-1, xs.shape[-1]))
-            enc_output = torch.cat([word_output, rythm_output], -1)
-            enc_output = self.concat(enc_output)
+            word_output = self.embed(xs[:,0,:].view(-1,xs.shape[-1]))
+            rythm_output= self.rhythm_embed(xs[:,1,:].view(-1,xs.shape[-1]))
+            enc_output=torch.cat([word_output,rythm_output],-1)
+            enc_output=self.concat(enc_output)
         else:
-            enc_output = self.embed(xs[:, 0, :].view(-1, xs.shape[-1]))
-
+            enc_output = self.embed(xs[:,0,:].view(-1,xs.shape[-1]))
+        
         return enc_output
+
+
 
 
 class Transformer(TTSInterface, torch.nn.Module):
@@ -459,9 +459,9 @@ class Transformer(TTSInterface, torch.nn.Module):
             help="Number of dimension of embedding",
         )
         group.add_argument(
-            '--train-stage',
-            default=1,
-            type=int,
+        '--train-stage',
+        default=1,
+        type=int,
         )
         group.add_argument(
             "--embed-rhythm-dim",
@@ -568,7 +568,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             default=False,
             type=strtobool,
             help="Use trainable scaled positional encoding "
-                 "instead of the fixed scale one.",
+            "instead of the fixed scale one.",
         )
         group.add_argument(
             "--use-batch-norm",
@@ -707,7 +707,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             default=0.1,
             type=float,
             help="Dropout rate for transformer decoder "
-                 "except for attention and pos encoding",
+            "except for attention and pos encoding",
         )
         group.add_argument(
             "--transformer-dec-positional-dropout-rate",
@@ -775,7 +775,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             default=5.0,
             type=float,
             help="Positive sample weight in BCE calculation "
-                 "(only for use-masking=True)",
+            "(only for use-masking=True)",
         )
         group.add_argument(
             "--use-guided-attn-loss",
@@ -800,14 +800,14 @@ class Transformer(TTSInterface, torch.nn.Module):
             default=2,
             type=int,
             help="Number of heads in each layer to be applied guided attention loss"
-                 "if set -1, all of the heads will be applied.",
+            "if set -1, all of the heads will be applied.",
         )
         group.add_argument(
             "--num-layers-applied-guided-attn",
             default=2,
             type=int,
             help="Number of layers to be applied guided attention loss"
-                 "if set -1, all of the layers will be applied.",
+            "if set -1, all of the layers will be applied.",
         )
         group.add_argument(
             "--modules-applied-guided-attn",
@@ -824,7 +824,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             help="Teacher model file path",
         )
         return parser
-
+       
     def _load_teacher_model(self, model_path):
         # get teacher model config
         idim, odim, arg = get_model_conf(model_path)
@@ -836,10 +836,11 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         # load teacher model
         from espnet.utils.dynamic_import import dynamic_import
+        
 
         model_class = dynamic_import(arg.model_module)
         model = model_class(idim, odim, arg)
-
+       
         torch_load(model_path, model)
         model.eval()
         model = model.to('cuda')
@@ -938,14 +939,16 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         # fill missing arguments
         args = fill_missing_args(args, self.add_arguments)
+        
+        
 
         # store hyperparameters
-        self.stage = args.train_stage
-        self.feat_pad_value = args.feat_pad_value
-        self.use_rhythm_embed = args.use_rhythm_embed
-        self.in_global = args.inference_global
-        self.dur_classfication = args.dur_classfication
-        self.dur_self_attn = args.dur_self_attn
+        self.stage=args.train_stage
+        self.feat_pad_value=args.feat_pad_value
+        self.use_rhythm_embed=args.use_rhythm_embed
+        self.in_global =args.inference_global
+        self.dur_classfication=args.dur_classfication
+        self.dur_self_attn=args.dur_self_attn
         self.idim = idim
         self.odim = odim
         self.spk_embed_dim = args.spk_embed_dim
@@ -954,7 +957,7 @@ class Transformer(TTSInterface, torch.nn.Module):
         self.use_scaled_pos_enc = args.use_scaled_pos_enc
         self.reduction_factor = args.reduction_factor
         self.loss_type = args.loss_type
-        self.dur_frame_buffer = args.dur_frame_buffer
+        self.dur_frame_buffer=args.dur_frame_buffer
         self.use_guided_attn_loss = args.use_guided_attn_loss
         if self.use_guided_attn_loss:
             if args.num_layers_applied_guided_attn == -1:
@@ -1000,13 +1003,13 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         else:
 
-            encoder_input_layer = Rhythm_Embedding(indim=idim,
-                                                   outdim=args.adim,
-                                                   rhythm_num=args.rhythm_num,
-                                                   embed_rhythm_dim=args.embed_rhythm_dim,
-                                                   concat_dim=args.concat_dim,
-                                                   use_rhythm_embed=self.use_rhythm_embed)
-        self.teacher_model = args.teacher_model
+            encoder_input_layer=Rhythm_Embedding(indim=idim,
+            outdim=args.adim,
+            rhythm_num=args.rhythm_num,
+            embed_rhythm_dim=args.embed_rhythm_dim,
+            concat_dim=args.concat_dim,
+            use_rhythm_embed=self.use_rhythm_embed)
+        self.teacher_model=args.teacher_model
 
         self.encoder = Encoder_v2(
             idim=idim,
@@ -1026,17 +1029,20 @@ class Transformer(TTSInterface, torch.nn.Module):
         )
         self.length_regulator = LengthRegulator_gs()
         if self.dur_self_attn:
-            self.dur_fft_block = fft_block(384, 384, 0.1, 4)
+            self.dur_fft_block=fft_block(384,384,0.1,4)
 
-        if args.use_dur_predictor:
+        if args.use_dur_predictor:  
+        
             self.duration_predictor = Duration_variance_Predictor(
-                idim=args.adim,
-                n_layers=args.duration_predictor_layers,
-                n_chans=args.duration_predictor_chans,
-                kernel_size=args.duration_predictor_kernel_size,
-                dropout_rate=args.duration_predictor_dropout_rate,
+            idim=args.adim,
+            n_layers=args.duration_predictor_layers,
+            n_chans=args.duration_predictor_chans,
+            kernel_size=args.duration_predictor_kernel_size,
+            dropout_rate=args.duration_predictor_dropout_rate,
             )
-
+            
+        
+        
         # define projection layer
         if self.spk_embed_dim is not None:
             if self.spk_embed_integration_type == "add":
@@ -1045,6 +1051,7 @@ class Transformer(TTSInterface, torch.nn.Module):
                 self.projection = torch.nn.Linear(
                     args.adim + self.spk_embed_dim, args.adim
                 )
+        
 
         # define transformer decoder
         if args.dprenet_layers != 0:
@@ -1060,7 +1067,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             )
         else:
             decoder_input_layer = "linear"
-        self.decoder = Phone_Autoaggressive_Decoder(
+        self.decoder=Phone_Autoaggressive_Decoder(
             odim=-1,
             attention_dim=args.adim,
             attention_heads=args.aheads,
@@ -1073,7 +1080,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             normalize_before=True,
 
         )
-
+        
         # define final projection
         self.feat_out = torch.nn.Linear(args.adim, odim * args.reduction_factor)
 
@@ -1093,17 +1100,24 @@ class Transformer(TTSInterface, torch.nn.Module):
         )
 
         # define loss function
-        self.use_dur_predictor = args.use_dur_predictor
-
+        self.use_dur_predictor=args.use_dur_predictor
+ 
         if args.use_dur_predictor:
-
-            self.criterion = FeedForwardTransformerLoss(
-                use_masking=args.use_masking,
-                use_weighted_masking=args.use_weighted_masking,
-                stage=self.stage
-
-            )
-
+            if self.dur_classfication:
+                 self.criterion=FeedForwardTransformerLoss_class(
+                    use_masking=args.use_masking,
+                    use_weighted_masking=args.use_weighted_masking,
+                    stage=self.stage
+                    
+                )           
+            else:
+                self.criterion=FeedForwardTransformerLoss(
+                    use_masking=args.use_masking,
+                    use_weighted_masking=args.use_weighted_masking,
+                    stage=self.stage
+                    
+                )
+        
         else:
             self.criterion = TransformerLoss(
                 use_masking=args.use_masking,
@@ -1113,7 +1127,7 @@ class Transformer(TTSInterface, torch.nn.Module):
         if self.use_guided_attn_loss:
             self.attn_criterion = GuidedMultiHeadAttentionLoss(
                 sigma=args.guided_attn_loss_sigma, alpha=args.guided_attn_loss_lambda,
-
+             
             )
         print(get_parameter_number(self.encoder))
         print(get_parameter_number(self.decoder))
@@ -1122,9 +1136,9 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         # initialize parameters
         # self._reset_parameters(
-        # init_type=args.transformer_init,
-        # init_enc_alpha=args.initial_encoder_alpha,
-        # init_dec_alpha=args.initial_decoder_alpha,
+            # init_type=args.transformer_init,
+            # init_enc_alpha=args.initial_encoder_alpha,
+            # init_dec_alpha=args.initial_decoder_alpha,
         # )
 
         # load pretrained model
@@ -1132,20 +1146,19 @@ class Transformer(TTSInterface, torch.nn.Module):
             self.load_pretrained_model(args.pretrained_model)
 
     def init_teacher_model(self):
-        # define teacher model
+           # define teacher model
         if self.teacher_model is not None:
             self.teacher = self._load_teacher_model(self.teacher_model)
-
+            
         else:
             self.teacher = None
 
         # define duration calculator
         if self.teacher is not None:
             self.duration_calculator = DurationCalculator(self.teacher)
-
+            
         else:
             self.duration_calculator = None
-
     def _reset_parameters(self, init_type, init_enc_alpha=1.0, init_dec_alpha=1.0):
         # initialize parameters
         initialize(self, init_type)
@@ -1154,17 +1167,18 @@ class Transformer(TTSInterface, torch.nn.Module):
         if self.use_scaled_pos_enc:
             self.encoder.embed[-1].alpha.data = torch.tensor(init_enc_alpha)
             self.decoder.embed[-1].alpha.data = torch.tensor(init_dec_alpha)
-
-    def _get_teacher_model_dur(self, xs, ys):
-        spembs = None
-        y = ys
-        y = self._add_first_frame_and_remove_last_frame(y)
-        ilens = torch.LongTensor([xs.shape[2]]).to(xs.device)
-        olens = torch.LongTensor([y.shape[1]]).to(xs.device)
+            
+    def _get_teacher_model_dur(self,xs, ys):
+        spembs=None
+        y=ys
+        y=self._add_first_frame_and_remove_last_frame(y)
+        ilens=torch.LongTensor([xs.shape[2]]).to(xs.device)
+        olens=torch.LongTensor([y.shape[1]]).to(xs.device)
         with torch.no_grad():
+            
             ds = self.duration_calculator(
-                xs, ilens, y, olens, spembs
-            )  #
+                        xs, ilens, y, olens, spembs
+                    )  #
         return ds
 
     def _add_first_frame_and_remove_last_frame(self, ys):
@@ -1173,7 +1187,7 @@ class Transformer(TTSInterface, torch.nn.Module):
         )
         return ys_in
 
-    def forward(self, xs, ilens, ys, labels, olens, spembs=None, pad_masks=None, phone_masks=None, *args, **kwargs):
+    def forward(self, xs, ilens, ys, labels, olens, max_ys,spembs=None,pad_masks=None,phone_masks=None ,*args, **kwargs):
         """Calculate forward propagation.
 
         Args:
@@ -1189,44 +1203,52 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         """
         # remove unnecessary padded part (for multi-gpus)
-
-        pad_mask = pad_masks
-        phone_mask = phone_masks
-
-        max_ys = ys.shape[1] + self.dur_frame_buffer
+        
+        pad_mask=pad_masks
+        phone_mask=phone_masks
+   
+        max_ys=max_ys.item()+self.dur_frame_buffer
+        
+ 
+        max_ilen = max(ilens)
+        max_olen = max(olens)
+        if max_ilen != xs.shape[1]:
+            xs = xs[:, :max_ilen]
+        if max_olen != ys.shape[1]:
+            ys = ys[:, :max_olen]
+            labels = labels[:, :max_olen]
+  
 
         # forward encoder
-        xs_input = xs[:, :2, :].view(xs.shape[0], 2, -1)
+        xs_input=xs[:,:2,:].view(xs.shape[0],2,-1)
+        x_masks = self._source_mask(ilens)
+        src_pos=self.get_seq_mask(ilens).cuda()
+        mel_pos=self.get_seq_mask(olens)
+        mel_pos=torch.cat([mel_pos,torch.zeros_like(mel_pos[:,:self.dur_frame_buffer])],dim=1).cuda()
+        HS, h_masks = self.encoder(xs_input,src_pos, x_masks)
+        
 
-        src_pos = self.get_seq_mask(ilens)
-        src_pos = torch.cat([src_pos, src_pos.new_zeros([src_pos.shape[0], xs.shape[-1] - src_pos.shape[1]])],
-                            dim=1).to(xs.device)
-        x_masks = src_pos.ne(0).unsqueeze(1)
-        mel_pos = self.get_seq_mask(olens)
-        mel_pos = torch.cat(
-            [mel_pos, torch.zeros_like(mel_pos[:, :(ys.shape[1] - mel_pos.shape[1]) + self.dur_frame_buffer])],
-            dim=1).to(xs.device)
-        HS, h_masks = self.encoder(xs_input, src_pos, x_masks)
+        dur=xs[:,2,:].view(xs.shape[0],xs.shape[-1])
+        d_masks = make_pad_mask(ilens).to(xs.device)
+        d_outs , variance = self.duration_predictor(HS, d_masks)
+        hs=self.length_regulator (xs=HS,dur=dur,variance=variance,ilen=ilens,olen=olens,i_max=HS.shape[1],o_max=max_ys)
 
-        dur = xs[:, 2, :].view(xs.shape[0], xs.shape[-1])
-        d_masks = src_pos.eq(0)
-        d_outs, variance = self.duration_predictor(HS, d_masks)
-        hs = self.length_regulator(xs=HS, dur=dur, variance=variance, ilen=ilens, olen=olens, i_max=HS.shape[1],
-                                   o_max=max_ys)
-
-        query_mask = mel_pos.ne(0)
+        query_mask=self._source_mask(olens).squeeze(1)
+        query_mask=torch.cat([query_mask,torch.zeros_like(query_mask[:,:self.dur_frame_buffer])],dim=-1)
         if self.dur_self_attn:
-            a_mask = query_mask.unsqueeze(1).repeat(1, query_mask.shape[1], 1).eq(0).repeat(4, 1, 1)
-            hs = self.dur_fft_block(query=hs, attn_mask=a_mask, query_mask=query_mask)[0]
+            a_mask=query_mask.unsqueeze(1).repeat(1,query_mask.shape[1], 1).eq(0).repeat(4, 1, 1)
+            hs=self.dur_fft_block( query=hs , attn_mask=a_mask, query_mask=query_mask)[0]
+
+ 
 
         # add first zero frame and remove last frame for auto-regressive
-        ys_in = torch.cat([torch.ones_like(ys[:, :self.dur_frame_buffer, :]) * self.feat_pad_value, ys], dim=1)
-        ys = torch.cat([ys, torch.ones_like(ys[:, :self.dur_frame_buffer, :]) * self.feat_pad_value], dim=1)
+        ys_in = torch.cat([torch.ones_like(ys[:,:self.dur_frame_buffer,:])*self.feat_pad_value,ys],dim=1)
+        ys=torch.cat([ys,torch.ones_like(ys[:,:self.dur_frame_buffer,:])*self.feat_pad_value],dim=1)
 
         # forward decoder
+        
 
-        zs, _, __ = self.decoder(query=ys_in, pos=mel_pos, memory=hs, pad_mask=pad_mask, dur_mask=phone_mask,
-                                 query_mask=query_mask)
+        zs, _ ,__=self.decoder(query=ys_in,pos=mel_pos,memory=hs,pad_mask=pad_mask,dur_mask=phone_mask,query_mask=query_mask)
         # (B, Lmax//r, odim * r) -> (B, Lmax//r * r, odim)
         before_outs = self.feat_out(zs).view(zs.size(0), -1, self.odim)
         # (B, Lmax//r, r) -> (B, Lmax//r * r)
@@ -1238,22 +1260,24 @@ class Transformer(TTSInterface, torch.nn.Module):
             after_outs = before_outs + self.postnet(
                 before_outs.transpose(1, 2)
             ).transpose(1, 2)
-
+            
+  
         # caluculate loss values
         if self.use_dur_predictor:
-            d_masks = src_pos.eq(0)
-            d_outs ,variance= self.duration_predictor(HS, d_masks)
+            d_masks = make_pad_mask(ilens).to(xs.device)
+            d_outs , variance = self.duration_predictor(HS, d_masks)
+
             l1_loss, duration_loss = self.criterion(
-                after_outs, before_outs, d_outs, ys, dur, src_pos.ne(0), mel_pos.ne(0)
+                after_outs, before_outs, d_outs, ys, dur, ilens-1, olens
             )
-            loss = l1_loss + duration_loss * 0.1
+            loss = l1_loss + duration_loss*0.1
             report_keys = [
-                {"l1_loss": l1_loss.item()},
-                {"duration_loss": duration_loss.item()},
-                {"loss": loss.item()},
+            {"l1_loss": l1_loss.item()},
+            {"duration_loss": duration_loss.item()},
+            {"loss": loss.item()},
             ]
 
-
+            
         else:
             l1_loss, l2_loss = self.criterion(
                 after_outs, before_outs, ys, olens
@@ -1284,7 +1308,7 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         return loss
 
-    def inference(self, x, inference_args, spemb=None, y=None, *args, **kwargs):
+    def inference(self, x, inference_args, spemb=None,y=None ,*args, **kwargs):
         """Generate the sequence of features given the sequences of characters.
 
         Args:
@@ -1302,164 +1326,169 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         """
 
-        device = x.device
+        device=x.device
 
         # forward encoder
-        if y is None:
+        if y is  None : 
             xs = x.unsqueeze(0)
-            xs_input = xs[:, :2, :].view(xs.shape[0], 2, -1)
-            src_pos = torch.arange(1, xs.shape[-1] + 1, device=device)
-            HS, _ = self.encoder(xs_input, src_pos, None)
-
+            xs_input=xs[:,:2,:].view(xs.shape[0],2,-1)
+            src_pos=torch.arange(1,xs.shape[-1]+1,device=device)
+            HS, _ = self.encoder(xs_input,src_pos, None)
+          
             if self.use_dur_predictor:
-                D = self.duration_predictor.inference(HS, None)
-                D = D.float()
+                D, variance=self.duration_predictor.inference(HS,None)
+                D=D.float() 
             else:
-                D = xs[:, 2, :].view(xs.shape[0], xs.shape[-1]).float()
-            D = xs[:, 2, :].view(xs.shape[0], xs.shape[-1]).float()
-            dur = torch.clamp(D, 0, self.dur_frame_buffer).long()
-            print(torch.sum(dur))
-            expand_hs = self.length_regulator(HS, dur).squeeze(0)
-
+                D=xs[:,2,:].view(xs.shape[0],xs.shape[-1]).float()  
+            D=xs[:,2,:].view(xs.shape[0],xs.shape[-1]).float()
+            dur=torch.clamp(D,0,self.dur_frame_buffer).long()
+            
+                    
+            expand_hs=self.length_regulator (xs=HS,dur=dur,variance=variance,ilen=None,olen=None,i_max=None,o_max=None).squeeze(0)
+            
+            
+           
+            
             if self.dur_self_attn:
-                qm = torch.sum(dur, dim=1)
-                qm = torch.ones([1, qm]).to(device)
-                a_mask = qm.unsqueeze(1).repeat(1, qm.shape[1], 1).eq(0).repeat(4, 1, 1)
+                qm=torch.sum(dur,dim=1)
+                qm=torch.ones([1,qm]).to(device)
+                a_mask=qm.unsqueeze(1).repeat(1,qm.shape[1], 1).eq(0).repeat(4, 1, 1)
+                expand_hs=self.dur_fft_block(query=expand_hs.unsqueeze(0) , attn_mask=a_mask, query_mask=qm)[0].squeeze(0)
+            dur_numpy=dur.detach().to('cpu').numpy()
+            dur_cumsum=dur.cumsum(dim=-1).view(-1)
+            ys_in=torch.ones([xs.shape[0],self.dur_frame_buffer,self.odim],device=device)*self.feat_pad_value
+            steps=dur.shape[1]
+            #caculate mask
 
-                expand_hs = self.dur_fft_block(query=expand_hs.unsqueeze(0), attn_mask=a_mask, query_mask=qm)[
-                    0].squeeze(0)
-            dur_numpy = dur.detach().to('cpu').numpy()
-            dur_cumsum = dur.cumsum(dim=-1).view(-1)
-            ys_in = torch.ones([xs.shape[0], self.dur_frame_buffer, self.odim], device=device) * self.feat_pad_value
-            steps = dur.shape[1]
-            # caculate mask
-
-            pad_mask_all = torch.from_numpy(get_pad_mask(dur_numpy, self.dur_frame_buffer, False)).to(device).squeeze(0)
-            phone_mask_all = torch.from_numpy(get_phone_mask(dur_numpy)).to(device).squeeze(0)
-
+            pad_mask_all=torch.from_numpy(get_pad_mask(dur_numpy,self.dur_frame_buffer,False)).to(device).squeeze(0)
+            phone_mask_all=torch.from_numpy(get_phone_mask(dur_numpy)).to(device).squeeze(0)   
+            
+            
+            
             if self.in_global:
-                decoder_cache = None
-            else:
-                decoder_cache = [None] * (self.decoder.decoders.decoder_num + 1)
-
-            for i in range(steps - 1):
-
-                mel_max_len = torch.sum(dur[0, :i]) + self.dur_frame_buffer
-
-                hs = expand_hs[:dur_cumsum[i], :]
-                hs = F.pad(hs, [0, 0, 0, mel_max_len - dur_cumsum[i]]).unsqueeze(0)
-                query_mask = torch.cat([torch.arange(1, dur_cumsum[i] + 1, device=device).unsqueeze(0),
-                                        torch.zeros([1, mel_max_len - dur_cumsum[i]], device=device).long()],
-                                       dim=-1)
-
-                phone_mask = phone_mask_all[:dur_cumsum[i], :dur_cumsum[i]]
-                pad_mask = pad_mask_all[:dur_cumsum[i], :mel_max_len]
-                phone_mask = F.pad(phone_mask,
-                                   [0, mel_max_len - dur_cumsum[i], 0, mel_max_len - dur_cumsum[i]]).unsqueeze(0)
-                pad_mask = F.pad(pad_mask, [0, 0, 0, mel_max_len - dur_cumsum[i]]).unsqueeze(0)
-
+                decoder_cache=None
+            else:    
+                decoder_cache=[None]*(self.decoder.decoders.decoder_num+1)
+                
+            for i in range(steps-1):
+                
+                mel_max_len=torch.sum(dur[0,:i])+self.dur_frame_buffer
+                   
+                hs=expand_hs[:dur_cumsum[i],:]
+                hs=F.pad(hs,[0,0,0,mel_max_len-dur_cumsum[i]]).unsqueeze(0)
+                query_mask= torch.cat([torch.arange(1, dur_cumsum[i] + 1,device=device).unsqueeze(0),
+                                  torch.zeros([1,mel_max_len-dur_cumsum[i]],device=device).long()],
+                                  dim=-1)
+                                                                   
+                phone_mask=phone_mask_all[:dur_cumsum[i],:dur_cumsum[i]]
+                pad_mask=pad_mask_all[:dur_cumsum[i],:mel_max_len]
+                phone_mask=F.pad(phone_mask,[0,mel_max_len-dur_cumsum[i],0,mel_max_len-dur_cumsum[i]]).unsqueeze(0)
+                pad_mask=F.pad(pad_mask,[0,0,0,mel_max_len-dur_cumsum[i]]).unsqueeze(0)
+                
                 if not self.in_global:
-                    pad_mask = pad_mask[:, -50:]
-                    phone_mask = phone_mask[:, -50:]
-                    query_mask = query_mask[:, -50:]
-
-                query_mask = query_mask.ne(0)
-                mel_pos = torch.arange(1, 1 + mel_max_len).to(device)
-                mel_pos = torch.clamp(mel_pos, 0, 1023).long()
-                zs, _, new_cache = self.decoder(query=ys_in,
-                                                pos=mel_pos,
-                                                memory=hs,
-                                                pad_mask=pad_mask,
-                                                dur_mask=phone_mask,
-                                                query_mask=query_mask,
-                                                decoder_cache=decoder_cache)
-                if self.in_global:
+                    pad_mask=pad_mask[:,-50:]
+                    phone_mask=phone_mask[:,-50:]
+                    query_mask=query_mask[:,-50:]
+                 
+                    
+                query_mask=query_mask.ne(0)
+                mel_pos = torch.arange(1,1+mel_max_len).to(device)
+                mel_pos=torch.clamp(mel_pos,0,1023).long()
+                zs, _,new_cache =self.decoder(query=ys_in, 
+                                    pos=mel_pos,
+                                    memory=hs,
+                                    pad_mask=pad_mask,
+                                    dur_mask=phone_mask,
+                                    query_mask=query_mask,
+                                    decoder_cache=decoder_cache)
+                if self.in_global :        
                     before_outs = self.feat_out(zs).view(zs.size(0), -1, self.odim)
-
+                    
                     if self.postnet is None:
                         after_outs = before_outs
                     else:
-                        after_outs = before_outs + self.postnet(before_outs.transpose(1, 2)).transpose(1, 2)
-                    ys = after_outs
-                    if i < steps - 2:
-                        ys_in = torch.cat([torch.ones([ys.shape[0], self.dur_frame_buffer, self.odim],
-                                                      device=device) * self.feat_pad_value,
-                                           ys[:, :dur_cumsum[i], :]], dim=1)
+                        after_outs = before_outs + self.postnet(before_outs.transpose(1, 2)).transpose(1, 2)                    
+                    ys=after_outs                
+                    if i <steps-2:
+                        ys_in=torch.cat([torch.ones([ys.shape[0],self.dur_frame_buffer,self.odim],device=device)*self.feat_pad_value,
+                                        ys[:,:dur_cumsum[i],:]],dim=1)                         
                     else:
-                        ys = ys[:, :dur_cumsum[i], :]
+                        ys=ys[:,:dur_cumsum[i],:]
                         break;
-
-                else:
-                    before_outs = self.feat_out(
-                        zs[:, -self.dur_frame_buffer:-self.dur_frame_buffer + dur[0, i], :]).view(zs.size(0), -1,
-                                                                                                  self.odim)
-                    if self.postnet is None:
+                    
+                else :
+                     before_outs = self.feat_out(zs[:,-self.dur_frame_buffer:-self.dur_frame_buffer+dur[0,i],:]).view(zs.size(0), -1, self.odim)
+                     if self.postnet is None:
                         after_outs = before_outs
-                    else:
-                        after_outs = before_outs + self.postnet(before_outs.transpose(1, 2)).transpose(1, 2)
-                    if decoder_cache[-1] is None:
-                        decoder_cache[-1] = after_outs
-                    else:
-                        decoder_cache[-1] = torch.cat([decoder_cache[-1], after_outs], dim=1)
-
-                    for j, cache in enumerate(new_cache):
-                        decoder_cache[j] = cache[:, :dur_cumsum[i], :]
-                    if i < steps - 2:
-                        ys_in = torch.cat([torch.ones([ys_in.shape[0], self.dur_frame_buffer, self.odim],
-                                                      device=device) * self.feat_pad_value,
-                                           decoder_cache[-1]], dim=1)
-                    else:
-                        ys = decoder_cache[-1]
+                     else:
+                        after_outs = before_outs + self.postnet(before_outs.transpose(1, 2)).transpose(1, 2)     
+                     if decoder_cache[-1] is None :
+                        decoder_cache[-1]=after_outs
+                     else :
+                        decoder_cache[-1]=torch.cat([decoder_cache[-1],after_outs],dim=1)
+                     
+                     for j ,cache in enumerate(new_cache):
+                        decoder_cache[j]=cache[:,:dur_cumsum[i],:]
+                     if i<steps-2:
+                        ys_in=torch.cat([torch.ones([ys_in.shape[0],self.dur_frame_buffer,self.odim],device=device)*self.feat_pad_value,
+                                        decoder_cache[-1]],dim=1)                         
+                     else:
+                        ys=decoder_cache[-1]
                         break
-
-
+                                             
+            
         else:
-
+           
             xs = x.unsqueeze(0)
-            y = y.unsqueeze(0)
-            xs_input = xs[:, :2, :].view(xs.shape[0], 2, -1)
-            src_pos = torch.arange(1, xs.shape[-1] + 1, device=device).view(1, -1)
-            hs, _ = self.encoder(xs_input, src_pos, None)
-            dur = xs[:, 2, :].view(xs.shape[0], xs.shape[-1])
-            ys_in = torch.cat([torch.ones_like(y[:, :self.dur_frame_buffer, :]) * self.feat_pad_value, y], dim=1)
-            hs = self.length_regulator(hs, dur, y.shape[1] + self.dur_frame_buffer)
-            olens = torch.from_numpy(np.asarray(y.shape[1])).view(1)
-            query_mask = self._source_mask(olens).squeeze(1)
-            query_mask = torch.cat([query_mask, torch.zeros_like(query_mask[:, :self.dur_frame_buffer])], dim=-1).to(
-                device)
-            pad_mask = torch_get_pad_mask(dur, self.dur_frame_buffer)
-            phone_mask = torch_get_phone_mask(dur[:, :-1], y.shape[1] + self.dur_frame_buffer)
-            mel_pos = self.get_seq_mask(olens)
-            mel_pos = torch.cat([mel_pos, torch.zeros_like(mel_pos[:, :self.dur_frame_buffer])], dim=1).to(device)
-            zs, _, __ = self.decoder(ys_in, pos=mel_pos, memory=hs, pad_mask=pad_mask, dur_mask=phone_mask,
-                                     query_mask=query_mask)
+            y  = y.unsqueeze(0)        
+            xs_input=xs[:,:2,:].view(xs.shape[0],2,-1)
+            src_pos=torch.arange(1,xs.shape[-1]+1,device=device).view(1,-1)
+            hs, _ = self.encoder(xs_input,src_pos, None)
+            dur=xs[:,2,:].view(xs.shape[0],xs.shape[-1])
+            ys_in = torch.cat([torch.ones_like(y[:,:self.dur_frame_buffer,:])*self.feat_pad_value,y],dim=1)
+            hs=self.length_regulator(hs,dur,y.shape[1]+self.dur_frame_buffer)
+            olens=torch.from_numpy(np.asarray(y.shape[1])).view(1)
+            query_mask=self._source_mask(olens).squeeze(1)
+            query_mask=torch.cat([query_mask,torch.zeros_like(query_mask[:,:self.dur_frame_buffer])],dim=-1).to(device)
+            pad_mask=torch_get_pad_mask(dur,self.dur_frame_buffer)
+            phone_mask=torch_get_phone_mask(dur[:,:-1],y.shape[1]+self.dur_frame_buffer)
+            mel_pos=self.get_seq_mask(olens)
+            mel_pos=torch.cat([mel_pos,torch.zeros_like(mel_pos[:,:self.dur_frame_buffer])],dim=1).to(device)
+            zs, _ ,__=self.decoder(ys_in,pos=mel_pos, memory=hs,pad_mask=pad_mask,dur_mask=phone_mask,query_mask=query_mask)
             before_outs = self.feat_out(zs).view(zs.size(0), -1, self.odim)
             if self.postnet is None:
                 after_outs = before_outs
             else:
                 after_outs = before_outs + self.postnet(before_outs.transpose(1, 2)).transpose(1, 2)
+                
+            ys= after_outs[:,:torch.sum(dur[0,:-1],dim=-1),:]
+           
+            
+        
+        outs=ys
 
-            ys = after_outs[:, :torch.sum(dur[0, :-1], dim=-1), :]
 
-        outs = ys
+        
+    
+     
+        
+        return {'mel_feats':outs.squeeze(0),
+                'dur':dur.squeeze().detach().cpu().numpy(),
+                'input_id':x[0,:].squeeze().detach().to('cpu').numpy()}
 
-        return {'mel_feats': outs.squeeze(0),
-                'dur': dur.squeeze().detach().cpu().numpy(),
-                'input_id': x[0, :].squeeze().detach().to('cpu').numpy()}
 
     def calculate_all_attentions(
-            self,
-            xs,
-            ilens,
-            ys,
-            olens,
-            spembs=None,
-            skip_output=False,
-            keep_tensor=False,
-            pad_masks=None,
-            phone_masks=None,
-            *args,
-            **kwargs
+        self,
+        xs,
+        ilens,
+        ys,
+        olens,
+        max_ys,
+        spembs=None,
+        skip_output=False,
+        keep_tensor=False,
+        *args,
+        **kwargs
     ):
         """Calculate all of the attention weights.
 
@@ -1479,24 +1508,18 @@ class Transformer(TTSInterface, torch.nn.Module):
         """
         with torch.no_grad():
             # forward encoder
-            max_ys = ys.shape[1] + self.dur_frame_buffer
-            xs_input = xs[:, :2, :].view(xs.shape[0], 2, -1)
-
-            src_pos = self.get_seq_mask(ilens)
-            src_pos = torch.cat([src_pos, src_pos.new_zeros([src_pos.shape[0], xs.shape[-1] - src_pos.shape[1]])],
-                                dim=1).to(xs.device)
-            x_masks = src_pos.ne(0).unsqueeze(1)
-
-            mel_pos = self.get_seq_mask(olens)
-            mel_pos = torch.cat(
-                [mel_pos, torch.zeros_like(mel_pos[:, :(ys.shape[1] - mel_pos.shape[1]) + self.dur_frame_buffer])],
-                dim=1).to(xs.device)
-            hs, h_masks = self.encoder(xs_input, src_pos, x_masks)
-            dur = xs[:, 2, :].view(xs.shape[0], xs.shape[-1])
-            d_masks = src_pos.eq(0)
-            d_outs, variance = self.duration_predictor(hs, d_masks)
-            hs = self.length_regulator(xs=hs, dur=dur, variance=variance, ilen=ilens, olen=olens, i_max=hs.shape[1],
-                                       o_max=max_ys)
+            max_ys=max_ys.item()+self.dur_frame_buffer
+            xs_input=xs[:,:2,:].view(xs.shape[0],2,-1)
+            x_masks = self._source_mask(ilens)
+                    
+            src_pos=self.get_seq_mask(ilens).cuda()
+            mel_pos=self.get_seq_mask(olens)
+            mel_pos=torch.cat([mel_pos,torch.zeros_like(mel_pos[:,:self.dur_frame_buffer])],dim=1).cuda()
+            hs, h_masks = self.encoder(xs_input,src_pos, x_masks)
+            dur=xs[:,2,:].view(xs.shape[0],xs.shape[-1])
+            d_masks = make_pad_mask(ilens).to(xs.device)      
+            d_outs , variance = self.duration_predictor(hs, d_masks)
+            hs=self.length_regulator(xs=hs,dur=dur,variance=variance,ilen=ilens,olen=olens,i_max=hs.shape[1],o_max=max_ys)
 
             # integrate speaker embedding
             if self.spk_embed_dim is not None:
@@ -1504,20 +1527,24 @@ class Transformer(TTSInterface, torch.nn.Module):
 
             # thin out frames for reduction factor
             # (B, Lmax, odim) ->  (B, Lmax//r, odim)
-            query_mask = mel_pos.ne(0)
+            query_mask=self._source_mask(olens).squeeze(1)
+            query_mask=torch.cat([query_mask,torch.zeros_like(query_mask[:,:self.dur_frame_buffer])],dim=-1)
             if self.dur_self_attn:
-                a_mask = query_mask.unsqueeze(1).repeat(1, query_mask.shape[1], 1).eq(0).repeat(4, 1, 1)
-                hs = self.dur_fft_block(query=hs, attn_mask=a_mask, query_mask=query_mask)[0]
+                a_mask=query_mask.unsqueeze(1).repeat(1,query_mask.shape[1], 1).eq(0).repeat(4, 1, 1)
+                hs=self.dur_fft_block( query=hs , attn_mask=a_mask, query_mask=query_mask)[0]
 
+
+            pad_mask=torch_get_pad_mask(dur,self.dur_frame_buffer)
+            phone_mask=torch_get_phone_mask(dur[:,:-1],max_ys)
+            
             olens_in = olens
 
             # add first zero frame and remove last frame for auto-regressive
-            ys_in = torch.cat([torch.ones_like(ys[:, :self.dur_frame_buffer, :]) * self.feat_pad_value, ys], dim=1)
+            ys_in = torch.cat([torch.ones_like(ys[:,:self.dur_frame_buffer,:])*self.feat_pad_value,ys],dim=1)
 
             # forward decoder
-
-            zs, _, _ = self.decoder(ys_in, pos=mel_pos, memory=hs, pad_mask=pad_masks, dur_mask=phone_masks,
-                                    query_mask=query_mask)
+            
+            zs, _ ,_=self.decoder(ys_in,pos=mel_pos,memory=hs,pad_mask=pad_mask,dur_mask=phone_mask,query_mask=query_mask)
 
             # calculate final outputs
             if not skip_output:
@@ -1600,16 +1627,19 @@ class Transformer(TTSInterface, torch.nn.Module):
             raise NotImplementedError("support only add or concat.")
 
         return hs
+        
+    def get_seq_mask(self,length):
 
-    def get_seq_mask(self, length):
-
-        # length :shape of [B,]
-        mask = []
-        max_t = torch.max(length)
+        #length :shape of [B,]
+        mask=[]
+        max_t=torch.max(length)
         for i in length:
-            mask.append(torch.nn.functional.pad(torch.arange(1, i + 1), [0, max_t - i]))
-        mask = torch.stack(mask, dim=0)
+            mask.append(torch.nn.functional.pad(torch.arange(1,i+1),[0,max_t-i]))
+        mask=torch.stack(mask,dim=0)
         return mask
+        
+
+
 
     def _source_mask(self, ilens):
         """Make masks for self-attention.
@@ -1676,7 +1706,7 @@ class Transformer(TTSInterface, torch.nn.Module):
             list: List of strings which are base keys to plot during training.
 
         """
-        plot_keys = ["loss", "l1_loss", "l2_loss", "bce_loss", 'duration_loss']
+        plot_keys = ["loss", "l1_loss", "l2_loss", "bce_loss",'duration_loss']
         if self.use_scaled_pos_enc:
             plot_keys += ["encoder_alpha", "decoder_alpha"]
         if self.use_guided_attn_loss:
@@ -1688,38 +1718,3 @@ class Transformer(TTSInterface, torch.nn.Module):
                 plot_keys += ["enc_dec_attn_loss"]
 
         return plot_keys
-
-
-if __name__ == '__main__':
-    def get_seq_mask(length):
-
-        # length :shape of [B,]
-        mask = []
-        max_t = torch.max(length)
-        for i in length:
-            mask.append(torch.nn.functional.pad(torch.arange(1, i + 1), [0, max_t - i]))
-        mask = torch.stack(mask, dim=0)
-        return mask
-
-
-    d = torch.LongTensor([5, 3, 0])
-    c = d.new_zeros(1, 1)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

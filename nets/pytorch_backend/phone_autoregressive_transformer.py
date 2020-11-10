@@ -42,6 +42,9 @@ from espnet.nets.pytorch_backend.fastspeech.duration_predictor import DurationPr
 from espnet.nets.pytorch_backend.fastspeech.duration_predictor import (
 DurationPredictorLoss)  # noqa: H301
 
+
+
+
 def get_parameter_number(net):
     total_num = sum(p.numel() for p in net.parameters())
     trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
@@ -189,7 +192,7 @@ class FeedForwardTransformerLoss(torch.nn.Module):
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.duration_criterion = DurationPredictorLoss(reduction=reduction)
 
-    def forward(self, after_outs, before_outs, d_outs, ys, ds, ilens, olens,stage=1):
+    def forward(self, after_outs, before_outs, d_outs, ys, ds, i_mask, o_mask,stage=1):
         """Calculate forward propagation.
 
         Args:
@@ -208,20 +211,16 @@ class FeedForwardTransformerLoss(torch.nn.Module):
         """
         # apply mask to remove padded part
         if self.use_masking:
-            duration_masks = make_non_pad_mask(ilens).to(ys.device)
-            duration_masks=torch.cat([duration_masks,duration_masks.new_zeros(duration_masks.shape[0],1)],dim=-1)
-            d_outs = d_outs.masked_select(duration_masks)
-            ds = ds.masked_select(duration_masks)
-            if self.stage==1:
 
-                out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-                buffer_size=ys.shape[1]-out_masks.shape[1]
-                out_masks=torch.cat([out_masks,torch.zeros_like(out_masks[:,:buffer_size,:])],dim=1)
-                before_outs = before_outs.masked_select(out_masks)
+            d_outs = d_outs.masked_select(i_mask)
+            ds = ds.masked_select(i_mask)
+            if self.stage==1:
+                o_mask=o_mask.unsqueeze(-1).repeat([1,1,80])
+                before_outs = before_outs.masked_select(o_mask)
                 after_outs = (
-                    after_outs.masked_select(out_masks) if after_outs is not None else None
+                    after_outs.masked_select(o_mask) if after_outs is not None else None
                 )
-                ys = ys.masked_select(out_masks)
+                ys = ys.masked_select(o_mask)
                 
                 # calculate loss
                 l1_loss = self.l1_criterion(before_outs, ys)
@@ -312,8 +311,10 @@ class TransformerLoss(torch.nn.Module):
             masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
             buffer_size=ys.shape[1]-masks.shape[1]
             masks=torch.cat([masks,torch.zeros_like(masks[:,:buffer_size,:])],dim=1)
+
             
             ys = ys.masked_select(masks)
+
             after_outs = after_outs.masked_select(masks)
             before_outs = before_outs.masked_select(masks)
 
@@ -1102,20 +1103,14 @@ class Transformer(TTSInterface, torch.nn.Module):
         self.use_dur_predictor=args.use_dur_predictor
  
         if args.use_dur_predictor:
-            if self.dur_classfication:
-                 self.criterion=FeedForwardTransformerLoss_class(
-                    use_masking=args.use_masking,
-                    use_weighted_masking=args.use_weighted_masking,
-                    stage=self.stage
-                    
-                )           
-            else:
-                self.criterion=FeedForwardTransformerLoss(
-                    use_masking=args.use_masking,
-                    use_weighted_masking=args.use_weighted_masking,
-                    stage=self.stage
-                    
-                )
+
+
+            self.criterion=FeedForwardTransformerLoss(
+                use_masking=args.use_masking,
+                use_weighted_masking=args.use_weighted_masking,
+                stage=self.stage
+
+            )
         
         else:
             self.criterion = TransformerLoss(
@@ -1186,7 +1181,7 @@ class Transformer(TTSInterface, torch.nn.Module):
         )
         return ys_in
 
-    def forward(self, xs, ilens, ys, labels, olens, max_ys,spembs=None,pad_masks=None,phone_masks=None ,*args, **kwargs):
+    def forward(self, xs, ilens, ys, labels, olens,spembs=None,pad_masks=None,phone_masks=None ,*args, **kwargs):
         """Calculate forward propagation.
 
         Args:
@@ -1202,28 +1197,23 @@ class Transformer(TTSInterface, torch.nn.Module):
 
         """
         # remove unnecessary padded part (for multi-gpus)
+
         
         pad_mask=pad_masks
         phone_mask=phone_masks
    
-        max_ys=max_ys.item()+self.dur_frame_buffer
+        max_ys=ys.shape[1]+self.dur_frame_buffer
         
- 
-        max_ilen = max(ilens)
-        max_olen = max(olens)
-        if max_ilen != xs.shape[1]:
-            xs = xs[:, :max_ilen]
-        if max_olen != ys.shape[1]:
-            ys = ys[:, :max_olen]
-            labels = labels[:, :max_olen]
-  
 
         # forward encoder
         xs_input=xs[:,:2,:].view(xs.shape[0],2,-1)
-        x_masks = self._source_mask(ilens)
-        src_pos=self.get_seq_mask(ilens).cuda()
+
+
+        src_pos=self.get_seq_mask(ilens)
+        src_pos=torch.cat([src_pos,src_pos.new_zeros([src_pos.shape[0],xs.shape[-1]-src_pos.shape[1]])],dim=1).to(xs.device)
+        x_masks=src_pos.ne(0).unsqueeze(1)
         mel_pos=self.get_seq_mask(olens)
-        mel_pos=torch.cat([mel_pos,torch.zeros_like(mel_pos[:,:self.dur_frame_buffer])],dim=1).cuda()
+        mel_pos=torch.cat([mel_pos,torch.zeros_like(mel_pos[:,:(ys.shape[1]-mel_pos.shape[1])+self.dur_frame_buffer])],dim=1).to(xs.device)
         HS, h_masks = self.encoder(xs_input,src_pos, x_masks)
         
 
@@ -1233,8 +1223,7 @@ class Transformer(TTSInterface, torch.nn.Module):
          
     
 
-        query_mask=self._source_mask(olens).squeeze(1)
-        query_mask=torch.cat([query_mask,torch.zeros_like(query_mask[:,:self.dur_frame_buffer])],dim=-1)
+        query_mask=mel_pos.ne(0)
         if self.dur_self_attn:
             a_mask=query_mask.unsqueeze(1).repeat(1,query_mask.shape[1], 1).eq(0).repeat(4, 1, 1)
             hs=self.dur_fft_block( query=hs , attn_mask=a_mask, query_mask=query_mask)[0]
@@ -1264,10 +1253,10 @@ class Transformer(TTSInterface, torch.nn.Module):
   
         # caluculate loss values
         if self.use_dur_predictor:
-            d_masks = make_pad_mask(ilens).to(xs.device)
-            d_outs = self.duration_predictor(HS, d_masks)
+            d_masks = src_pos.eq(0)
+            d_outs = self.duration_predictor(HS,d_masks)
             l1_loss, duration_loss = self.criterion(
-                after_outs, before_outs, d_outs, ys, dur, ilens-1, olens
+                after_outs, before_outs, d_outs, ys, dur, src_pos.ne(0), mel_pos.ne(0)
             )
             loss = l1_loss + duration_loss*0.1
             report_keys = [
@@ -1481,10 +1470,11 @@ class Transformer(TTSInterface, torch.nn.Module):
         ilens,
         ys,
         olens,
-        max_ys,
         spembs=None,
         skip_output=False,
         keep_tensor=False,
+        pad_masks=None,
+        phone_masks=None,
         *args,
         **kwargs
     ):
@@ -1506,13 +1496,19 @@ class Transformer(TTSInterface, torch.nn.Module):
         """
         with torch.no_grad():
             # forward encoder
-            max_ys=max_ys.item()+self.dur_frame_buffer
+            max_ys = ys.shape[1] + self.dur_frame_buffer
             xs_input=xs[:,:2,:].view(xs.shape[0],2,-1)
-            x_masks = self._source_mask(ilens)
-                    
-            src_pos=self.get_seq_mask(ilens).cuda()
-            mel_pos=self.get_seq_mask(olens)
-            mel_pos=torch.cat([mel_pos,torch.zeros_like(mel_pos[:,:self.dur_frame_buffer])],dim=1).cuda()
+
+
+            src_pos = self.get_seq_mask(ilens)
+            src_pos = torch.cat([src_pos, src_pos.new_zeros([src_pos.shape[0], xs.shape[-1] - src_pos.shape[1]])],
+                                dim=1).to(xs.device)
+            x_masks = src_pos.ne(0).unsqueeze(1)
+
+            mel_pos = self.get_seq_mask(olens)
+            mel_pos = torch.cat(
+                [mel_pos, torch.zeros_like(mel_pos[:, :(ys.shape[1] - mel_pos.shape[1]) + self.dur_frame_buffer])],
+                dim=1).to(xs.device)
             hs, h_masks = self.encoder(xs_input,src_pos, x_masks)
             dur=xs[:,2,:].view(xs.shape[0],xs.shape[-1])
             hs=self.length_regulator(hs,dur,max_ys)
@@ -1523,15 +1519,13 @@ class Transformer(TTSInterface, torch.nn.Module):
 
             # thin out frames for reduction factor
             # (B, Lmax, odim) ->  (B, Lmax//r, odim)
-            query_mask=self._source_mask(olens).squeeze(1)
-            query_mask=torch.cat([query_mask,torch.zeros_like(query_mask[:,:self.dur_frame_buffer])],dim=-1)
+            query_mask = mel_pos.ne(0)
             if self.dur_self_attn:
                 a_mask=query_mask.unsqueeze(1).repeat(1,query_mask.shape[1], 1).eq(0).repeat(4, 1, 1)
                 hs=self.dur_fft_block( query=hs , attn_mask=a_mask, query_mask=query_mask)[0]
 
 
-            pad_mask=torch_get_pad_mask(dur,self.dur_frame_buffer)
-            phone_mask=torch_get_phone_mask(dur[:,:-1],max_ys)
+
             
             olens_in = olens
 
@@ -1540,7 +1534,7 @@ class Transformer(TTSInterface, torch.nn.Module):
 
             # forward decoder
             
-            zs, _ ,_=self.decoder(ys_in,pos=mel_pos,memory=hs,pad_mask=pad_mask,dur_mask=phone_mask,query_mask=query_mask)
+            zs, _ ,_=self.decoder(ys_in,pos=mel_pos,memory=hs,pad_mask=pad_masks,dur_mask=phone_masks,query_mask=query_mask)
 
             # calculate final outputs
             if not skip_output:
@@ -1714,3 +1708,37 @@ class Transformer(TTSInterface, torch.nn.Module):
                 plot_keys += ["enc_dec_attn_loss"]
 
         return plot_keys
+
+
+
+if __name__ =='__main__':
+    def get_seq_mask(length):
+
+        #length :shape of [B,]
+        mask=[]
+        max_t=torch.max(length)
+        for i in length:
+            mask.append(torch.nn.functional.pad(torch.arange(1,i+1),[0,max_t-i]))
+        mask=torch.stack(mask,dim=0)
+        return mask
+    d=torch.LongTensor([5,3,0])
+    c=d.new_zeros(1,1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

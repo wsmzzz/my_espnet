@@ -379,7 +379,7 @@ class LoadInputsAndTargets(object):
             eos=np.asarray([[0],[0],[50]])
         
         elif xs[0].shape[0]==2:
-            eos=np.asarray([[eos],[0]])
+            eos=np.asarray([[0],[0]])
         
        
         # get index of non-zero length samples
